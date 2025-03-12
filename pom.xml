@@ -50,7 +50,7 @@
         <repository>
             <id>portada</id>
             <name>GitHub portada-git Apache Maven Packages for PortADa project</name>
-            <url>https://maven.pkg.github.com/portada-git/jportadamscaller</url>
+            <url>https://maven.pkg.github.com/portada-git/jportada_ms_caller</url>
         </repository>
     </distributionManagement>
 </project>
