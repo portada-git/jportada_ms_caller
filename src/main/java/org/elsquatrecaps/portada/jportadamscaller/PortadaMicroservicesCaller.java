@@ -44,11 +44,14 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.client.ClientHttpResponse;
+import org.springframework.http.client.HttpComponentsClientHttpRequestFactory;
 import org.springframework.http.converter.FormHttpMessageConverter;
 import org.springframework.http.converter.HttpMessageConverter;
 import org.springframework.http.converter.StringHttpMessageConverter;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.DefaultResponseErrorHandler;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestTemplate;
 
 /**
@@ -56,7 +59,7 @@ import org.springframework.web.client.RestTemplate;
  * @author josep
  */
 public class PortadaMicroservicesCaller {
-    public static final String SECURITY_PATH = "security";
+    public String securityPath = "security";
     public static String[] msContext = {"java", "python", "r", "docker"};
     protected Map<String, ConnectionMs> conDataList;
 
@@ -71,6 +74,11 @@ public class PortadaMicroservicesCaller {
     }
 
     public PortadaMicroservicesCaller() {
+    }
+    
+    public <S extends PortadaMicroservicesCaller> S  init(String securityPath) {
+        this.securityPath = securityPath;
+        return (S) this;
     }
     
     public <S extends PortadaMicroservicesCaller> S  init(Map<String, ConnectionMs> conDataList) {
@@ -107,6 +115,9 @@ public class PortadaMicroservicesCaller {
             }
             conDataList.put(cntx, new ConnectionMs(protocol, port, host, pref));
         }
+        if (props.containsKey("security_path")){
+            this.securityPath = props.getProperty("security_path");
+        }
         return (S) this;
     }
 
@@ -136,16 +147,20 @@ public class PortadaMicroservicesCaller {
     }
 
     public <T> T sendPostAsFormatParams(String command, String context, MultiValueMap<String, Object> params, SignedData signatureData, Class<T> type, boolean secureRepeat) throws PortadaMicroserviceCallException {
+        return sendPostAsFormatParams(command, context, params, null, null, signatureData, type, secureRepeat);
+    }
+
+    public <T> T sendPostAsFormatParams(String command, String context, MultiValueMap<String, Object> params, String challenge, String signedChallenge, Class<T> type, boolean secureRepeat) throws PortadaMicroserviceCallException {
+        return sendPostAsFormatParams(command, context, params, challenge, signedChallenge, null, type, secureRepeat);
+    }
+
+    private <T> T sendPostAsFormatParams(String command, String context, MultiValueMap<String, Object> params, String challenge, String signedChallenge, SignedData signatureData, Class<T> type, boolean secureRepeat) throws PortadaMicroserviceCallException {
         T ret = null;
         RestTemplate restTemplate = new RestTemplate();
+        restTemplate.setRequestFactory(new HttpComponentsClientHttpRequestFactory());
         restTemplate.setErrorHandler(new DefaultResponseErrorHandler() {
-            //            @Override
-            //            public void handleError(ClientHttpResponse response) throws IOException {
-            //                // No fem res aquí, evitant que es llenci una excepció
-            //            }
             @Override
             public boolean hasError(ClientHttpResponse response) throws IOException {
-                // Retornem `false` perquè cap resposta es consideri un error
                 return false;
             }
         });
@@ -156,6 +171,9 @@ public class PortadaMicroservicesCaller {
         if (signatureData != null) {
             headers.set("X-Signature", signatureData.getSignedData());
             headers.set("Cookie", signatureData.getSessionCookie());
+        }else if (challenge !=null && signedChallenge!=null){
+            headers.set("X-Challenge", challenge);
+            headers.set("X-Signature", signedChallenge);
         }
         HttpEntity<MultiValueMap<String, Object>> requestEntity = new HttpEntity<>(params, headers);
         ResponseEntity<T> response = restTemplate.exchange(strUrl, HttpMethod.POST, requestEntity, type);
@@ -185,18 +203,20 @@ public class PortadaMicroservicesCaller {
     }
 
     public <T> T sendPostAsFormatParams(String command, String context, JSONObject params, SignedData signatureData, Class<T> type, boolean secureRepeat) throws PortadaMicroserviceCallException {
+        return sendPostAsFormatParams(command, context, params, null, null, signatureData, type, secureRepeat);
+    }
+    
+    public <T> T sendPostAsFormatParams(String command, String context, JSONObject params, String challenge, String signedChallenge, Class<T> type, boolean secureRepeat) throws PortadaMicroserviceCallException {
+        return sendPostAsFormatParams(command, context, params, challenge, signedChallenge, null, type, secureRepeat);
+    }
+        
+    private <T> T sendPostAsFormatParams(String command, String context, JSONObject params, String challenge, String signedChallenge, SignedData signatureData, Class<T> type, boolean secureRepeat) throws PortadaMicroserviceCallException {
         T ret;
         RestTemplate restTemplate = new RestTemplate();
+        restTemplate.setRequestFactory(new HttpComponentsClientHttpRequestFactory());
         restTemplate.setErrorHandler(new DefaultResponseErrorHandler() {
             @Override
-            public void handleError(ClientHttpResponse response) throws IOException {
-                // No fem res aquí, evitant que es llenci una excepció
-                System.out.println(response.getStatusText());
-            }
-
-            @Override
             public boolean hasError(ClientHttpResponse response) throws IOException {
-                // Retornem `false` perquè cap resposta es consideri un error
                 return false;
             }
         });
@@ -206,22 +226,25 @@ public class PortadaMicroservicesCaller {
         if (signatureData != null) {
             headers.set("X-Signature", signatureData.getSignedData());
             headers.set("Cookie", signatureData.getSessionCookie());
+        }else if (challenge !=null && signedChallenge!=null){
+            headers.set("X-Challenge", challenge);
+            headers.set("X-Signature", signedChallenge);
         }
         HttpEntity<String> requestEntity = new HttpEntity<>(params.toString(), headers);
         ResponseEntity<T> response = restTemplate.exchange(strUrl, HttpMethod.POST, requestEntity, type);
         int responseCode = response.getStatusCode().value();
         if ((responseCode >= 200) && (responseCode < 400)) {
             ret = response.getBody();
-        } else if (responseCode == 401 && secureRepeat) {
+        } else if (responseCode == 401 && secureRepeat && params.has("team")) {
             try {
-                SignedData signedData = signChallengeOfConnection(response, params.optString("team", null));
+                SignedData signedData = signChallengeOfConnection(response, params.getString("team"));
                 if (signedData == null) {
                     throw new PortadaMicroserviceCallException(-401, "You need generate a security key access");
                 } else {
                     ret = sendPostAsFormatParams(command, context, params, signedData, type, false);
                 }
-            } catch (Exception ex) {
-                throw new PortadaMicroserviceCallException(-100, String.format("Unexpected error: %s.\nPlease check with the person in charge.", ex.getMessage()), ex);
+            } catch (Exception exc) {
+                throw new PortadaMicroserviceCallException(-100, String.format("Unexpected error: %s.\nPlease check with the person in charge.", exc.getMessage()), exc);
             }
         } else {
             String message = response.getHeaders().getFirst("X-message_error");
@@ -231,8 +254,47 @@ public class PortadaMicroservicesCaller {
                 throw new PortadaMicroserviceCallException(-responseCode, "Unexpected http error.\nPlease check with the person in charge.");
             }
         }
-        return ret;
+        return ret;                
     }
+    
+//    private <T> T sendPostErrorHandler(ClientHttpResponse response, String command, String context, JSONObject jparams, MultiValueMap<String, Object> mparams, Class<T> type, boolean secureRepeat) throws PortadaMicroserviceCallException{
+//        T ret = null;
+//        int responseCode;
+//        try {
+//            responseCode = response.getStatusCode().value();
+//            if (responseCode == 401 && secureRepeat) {
+//                try {
+//                    if(jparams!=null){
+//                        SignedData signedData = signChallengeOfConnection(jparams.optString("team", null), response.getBody(), response.getHeaders().getFirst("Set-Cookie"));
+//                        if (signedData == null) {
+//                            throw new PortadaMicroserviceCallException(-401, "You need generate a security key access");
+//                        } else {
+//                            ret = sendPostAsFormatParams(command, context, jparams, signedData, type, false);
+//                        }
+//                    }else if(mparams!=null){
+//                        SignedData signedData = signChallengeOfConnection(mparams.getFirst("team").toString(), response.getBody(), response.getHeaders().getFirst("Set-Cookie"));
+//                        if (signedData == null) {
+//                            throw new PortadaMicroserviceCallException(-401, "You need generate a security key access");
+//                        } else {
+//                            ret = sendPostAsFormatParams(command, context, mparams, signedData, type, false);
+//                        }
+//                    }
+//                } catch (Exception ex) {
+//                    throw new PortadaMicroserviceCallException(-100, String.format("Unexpected error: %s.\nPlease check with the person in charge.", ex.getMessage()), ex);
+//                }
+//            } else {
+//                String message = response.getHeaders().getFirst("X-message_error");
+//                if (message != null) {
+//                    throw new PortadaMicroserviceCallException(-responseCode, String.format("Unexpected http error in server process: %s.\nPlease check with the person in charge.", message));
+//                } else {
+//                    throw new PortadaMicroserviceCallException(-responseCode, "Unexpected http error.\nPlease check with the person in charge.");
+//                }
+//            }
+//        } catch (IOException ex) {
+//            throw new PortadaMicroserviceCallException(-101, ex.getMessage());
+//        }      
+//        return ret;
+//    }
 
     public String sendData(String command, HashMap<String, String> paramData, String context) throws Exception {
         return sendData(command, paramData, null, context);
@@ -368,7 +430,7 @@ public class PortadaMicroservicesCaller {
 
     protected SignedData signChallengeOfConnection(String team, InputStream stream, String sessionCookie) throws Exception {
         SignedData ret = null;
-        File privateKeyFile = new File(new File(SECURITY_PATH, team), "private.pem").getCanonicalFile().getAbsoluteFile();
+        File privateKeyFile = new File(new File(securityPath, team), "private.pem").getCanonicalFile().getAbsoluteFile();
         if (privateKeyFile.exists()) {
             PrivateKey privateKey = loadPrivateKey(privateKeyFile.getAbsolutePath());
             InputStreamReader reader = new InputStreamReader(stream);
@@ -381,7 +443,7 @@ public class PortadaMicroservicesCaller {
 
     protected SignedData signChallengeOfConnection(String team, String content, String sessionCookie) throws Exception {
         SignedData ret = null;
-        File privateKeyFile = new File(new File(SECURITY_PATH, team), "private.pem").getCanonicalFile().getAbsoluteFile();
+        File privateKeyFile = new File(new File(securityPath, team), "private.pem").getCanonicalFile().getAbsoluteFile();
         if (privateKeyFile.exists()) {
             PrivateKey privateKey = loadPrivateKey(privateKeyFile.getAbsolutePath());
             JSONObject jsonResponse = new JSONObject(content);

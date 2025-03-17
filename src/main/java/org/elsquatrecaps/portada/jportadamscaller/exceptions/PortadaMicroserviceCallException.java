@@ -1,13 +1,16 @@
 package org.elsquatrecaps.portada.jportadamscaller.exceptions;
 
+import java.io.IOException;
+
 /**
  *
  * @author josep
  */
-public class PortadaMicroserviceCallException  extends Exception{
+public class PortadaMicroserviceCallException  extends IOException{
     private int errorcode;
 
     public PortadaMicroserviceCallException(int errorcode) {
+        super();
         this.errorcode = errorcode;
     }
 
