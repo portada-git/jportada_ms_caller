@@ -218,6 +218,7 @@ public class PortadaMicroservicesCaller {
                 return false;
             }
         });
+        System.out.println("CTX: ".concat(context));
         String strUrl = String.format("%s://%s:%s%s%s", getProtocol(context), getHost(context), getPort(context), getPref(context), command);
         HttpHeaders headers = new HttpHeaders();
         headers.set("Content-Type", "application/json");
